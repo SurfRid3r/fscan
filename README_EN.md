@@ -175,7 +175,8 @@ Comprehensive intranet scanning tool for automated vulnerability assessment.
 ./fscan -local systeminfo
 
 # Hash authentication
-./fscan -h 192.168.1.1 -m smb2 -user admin -hash xxxxx
+./fscan -h 192.168.1.1 -m smb -user admin -hash 0123456789abcdef0123456789abcdef
+# Hash mode takes precedence over password options; smb2 is no longer a module name
 
 # Redis write pubkey
 ./fscan -h 192.168.1.1 -m redis -rf id_rsa.pub

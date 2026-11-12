@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	iofs "io/fs"
@@ -508,6 +509,7 @@ func (a *SMB2Authenticator) Authenticate(ctx context.Context, host string, port 
 		Initiator: &smb2.NTLMInitiator{
 			User:     cred.Username,
 			Password: cred.Password,
+			Hash:     cred.Hash,
 			Domain:   domain,
 		},
 	}
@@ -552,6 +554,7 @@ func listSMBSharesInternal(ctx context.Context, host string, port int, cred Cred
 		Initiator: &smb2.NTLMInitiator{
 			User:     cred.Username,
 			Password: cred.Password,
+			Hash:     cred.Hash,
 			Domain:   domain,
 		},
 	}
@@ -634,6 +637,15 @@ func (w *smb2SessionWrapper) Close() error {
 func classifySMBError(err error) ErrorType {
 	if err == nil {
 		return ErrorTypeUnknown
+	}
+	var responseErr *smb2.ResponseError
+	if errors.As(err, &responseErr) && responseErr.Code == 0xc0000234 {
+		return ErrorTypeLockout
+	}
+	for _, keyword := range []string{"account locked", "account has been automatically locked", "account has been locked", "status_account_locked_out", "0xc0000234"} {
+		if containsIgnoreCase(err.Error(), keyword) {
+			return ErrorTypeLockout
+		}
 	}
 
 	smbAuthErrors := []string{

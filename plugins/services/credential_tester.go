@@ -41,6 +41,7 @@ const (
 	ErrorTypeNetwork                   // 网络错误 - 连接不可达，可重试但计入连续失败
 	ErrorTypeThrottle                  // 限流错误 - 服务端拒绝连接（MaxStartups等），退避后重试，不计入连续失败
 	ErrorTypeUnknown                   // 未知错误
+	ErrorTypeLockout                   // 账号锁定，不重试
 )
 
 // =============================================================================
@@ -252,11 +253,13 @@ func TestCredentialsConcurrently(
 
 	// 启动 workers
 	var wg sync.WaitGroup
+	lockedUsers := make(map[string]bool)
+	var lockedMutex sync.Mutex
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			workerTestCredentials(cancelCtx, credChan, resultChan, authFn, serviceName, testConfig)
+			workerTestCredentials(cancelCtx, credChan, resultChan, authFn, serviceName, testConfig, lockedUsers, &lockedMutex)
 		}()
 	}
 
@@ -299,6 +302,8 @@ func workerTestCredentials(
 	authFn AuthFunc,
 	serviceName string,
 	testConfig ConcurrentTestConfig,
+	lockedUsers map[string]bool,
+	lockedMutex *sync.Mutex,
 ) {
 	consecutiveNetErrors := 0
 
@@ -314,9 +319,20 @@ func workerTestCredentials(
 		if consecutiveNetErrors >= testConfig.MaxConsecutiveNetErrors {
 			return
 		}
+		lockedMutex.Lock()
+		locked := lockedUsers[cred.Username]
+		lockedMutex.Unlock()
+		if locked {
+			continue
+		}
 
 		// 带重试的凭据测试
 		result, errType := testCredentialWithRetry(ctx, cred, authFn, serviceName, testConfig)
+		if errType == ErrorTypeLockout {
+			lockedMutex.Lock()
+			lockedUsers[cred.Username] = true
+			lockedMutex.Unlock()
+		}
 		if result != nil && result.Success {
 			resultChan <- result
 			return
@@ -370,12 +386,13 @@ func testCredentialWithRetry(
 				Service:  serviceName,
 				Username: cred.Username,
 				Password: cred.Password,
+				Hash:     cred.Hash,
 			}, ErrorTypeUnknown
 		}
 
 		// 根据错误类型决定是否重试
 		switch result.ErrorType {
-		case ErrorTypeAuth:
+		case ErrorTypeAuth, ErrorTypeLockout:
 			// 认证错误（密码错误），不重试
 			return nil, result.ErrorType
 		case ErrorTypeNetwork, ErrorTypeThrottle, ErrorTypeUnknown:

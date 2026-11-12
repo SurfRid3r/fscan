@@ -176,7 +176,8 @@
 ./fscan -local systeminfo
 
 # Hash碰撞
-./fscan -h 192.168.1.1 -m smb2 -user admin -hash xxxxx
+./fscan -h 192.168.1.1 -m smb -user admin -hash 0123456789abcdef0123456789abcdef
+# Hash模式优先于密码参数；smb2不再是模块名
 
 # Redis写公钥
 ./fscan -h 192.168.1.1 -m redis -rf id_rsa.pub

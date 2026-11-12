@@ -47,6 +47,7 @@ type Result struct {
 	Service  string
 	Username string
 	Password string
+	Hash     []byte
 	Banner   string
 	Output   string // web/local插件使用
 	Error    error
@@ -76,6 +77,7 @@ type ExploitResult struct {
 type Credential struct {
 	Username string
 	Password string
+	Hash     []byte
 	KeyData  []byte
 }
 
@@ -237,6 +239,15 @@ func hasPluginType(types []string, typeName string) bool {
 func GenerateCredentials(service string, config *common.Config) []Credential {
 	var credentials []Credential
 	credConfig := config.Credentials
+
+	if service == "smb" && len(credConfig.HashBytes) > 0 {
+		for _, user := range credConfig.Userdict[service] {
+			for _, hash := range credConfig.HashBytes {
+				credentials = append(credentials, Credential{Username: user, Hash: hash})
+			}
+		}
+		return credentials
+	}
 
 	// 优先使用精确的用户密码对
 	if len(credConfig.UserPassPairs) > 0 {

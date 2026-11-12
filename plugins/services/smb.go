@@ -4,6 +4,7 @@ package services
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -71,6 +72,9 @@ func (p *SmbPlugin) Scan(ctx context.Context, info *common.HostInfo, session *co
 
 	// 3. 根据协议版本选择认证器
 	auth := p.getAuthenticator(smbTarget.Protocol)
+	if len(config.Credentials.HashBytes) > 0 {
+		auth = &SMB2Authenticator{}
+	}
 
 	// 4. 未授权访问检测
 	if result := p.testUnauthorizedAccess(ctx, info, auth, config, state, session); result != nil && result.Success {
@@ -90,24 +94,34 @@ func (p *SmbPlugin) Scan(ctx context.Context, info *common.HostInfo, session *co
 		return p.buildInfoResult(smbTarget, probeErr)
 	}
 
-	creds := make([]Credential, len(credentials))
-	for i, c := range credentials {
-		creds[i] = Credential{Username: c.Username, Password: c.Password}
-	}
-
 	authFn := p.createAuthFunc(info, auth, session)
 	testConfig := DefaultConcurrentTestConfigWithTarget(config, info)
 
-	result := TestCredentialsConcurrently(ctx, creds, authFn, "smb", testConfig)
+	result := TestCredentialsConcurrently(ctx, credentials, authFn, "smb", testConfig)
 
 	if result.Success {
+		password := result.Password
+		if len(result.Hash) > 0 {
+			password = hex.EncodeToString(result.Hash)
+		}
 		var successMsg string
 		if config.Credentials.Domain != "" {
-			successMsg = fmt.Sprintf("SMB %s %s\\%s:%s", target, config.Credentials.Domain, result.Username, result.Password)
+			successMsg = fmt.Sprintf("SMB %s %s\\%s:%s", target, config.Credentials.Domain, result.Username, password)
 		} else {
-			successMsg = fmt.Sprintf("SMB %s %s:%s", target, result.Username, result.Password)
+			successMsg = fmt.Sprintf("SMB %s %s:%s", target, result.Username, password)
 		}
 		session.LogVuln(successMsg)
+		shares, err := auth.ListShares(ctx, info.Host, info.Port, Credential{Username: result.Username, Password: result.Password, Hash: result.Hash}, config.Credentials.Domain, config.ModuleTimeout(), session)
+		if err != nil {
+			session.LogDebug(fmt.Sprintf("%s: %v", target, err))
+		} else if len(shares) > 0 {
+			var output strings.Builder
+			fmt.Fprintf(&output, "SMB %s", target)
+			for _, share := range shares {
+				fmt.Fprintf(&output, "\n%s", share)
+			}
+			session.LogSuccess(output.String())
+		}
 	}
 
 	return result
